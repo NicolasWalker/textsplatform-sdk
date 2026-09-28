@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>View Once Saver</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a222c;
+      --border: #2a3542;
+      --text: #e8eef4;
+      --muted: #8b9aab;
+      --accent: #25d366;
+      --accent-dim: #1da851;
+      --danger: #ff6b6b;
+      --warn: #ffc857;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .wrap {
+      padding: 24px;
+      max-width: 480px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .dot.qr, .dot.connecting, .dot.starting { background: var(--warn); }
+    .dot.open { background: var(--accent); box-shadow: 0 0 0 3px rgba(37, 211, 102, 0.2); }
+    .dot.closed, .dot.logged-out { background: var(--danger); }
+
+    #status-detail {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 8px;
+      line-height: 1.4;
+    }
+
+    #qr-wrap {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 0 4px;
+    }
+
+    #qr-wrap.visible { display: flex; }
+
+    #qr {
+      width: 260px;
+      height: 260px;
+      border-radius: 12px;
+      background: #fff;
+      padding: 10px;
+    }
+
+    .steps {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .stat {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+    }
+
+    .stat .label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .stat .value {
+      margin-top: 6px;
+      font-size: 28px;
+      font-weight: 650;
+      letter-spacing: -0.03em;
+    }
+
+    .path {
+      font-size: 12px;
+      color: var(--muted);
+      word-break: break-all;
+      margin-top: 6px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: #243040;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 9px 14px;
+      font-size: 13px;
+      font-weight: 550;
+      cursor: pointer;
+    }
+
+    button:hover { background: #2c3a4d; }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent-dim);
+      color: #062812;
+    }
+    button.primary:hover { filter: brightness(1.05); }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    #saves {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 220px;
+      overflow: auto;
+    }
+
+    #saves li {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      background: #121820;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      font-size: 12px;
+    }
+
+    #saves .meta { color: var(--muted); }
+    #saves button {
+      padding: 5px 10px;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+
+    .empty {
+      color: var(--muted);
+      font-size: 13px;
+      margin: 0;
+    }
+
+    #errors, #logs {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      color: var(--muted);
+      max-height: 100px;
+      overflow: auto;
+      white-space: pre-wrap;
+      margin: 0;
+      line-height: 1.45;
+    }
+
+    #errors { color: #ffb4b4; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>View Once Saver</h1>
+      <p class="subtitle">Link WhatsApp, then save view-once photos and videos from recent history and new messages.</p>
+    </header>
+
+    <section class="card">
+      <div class="status-row">
+        <span class="dot" id="status-dot"></span>
+        <strong id="status-label">Starting…</strong>
+      </div>
+      <div id="status-detail">Preparing WhatsApp connection</div>
+      <div id="qr-wrap">
+        <img id="qr" alt="WhatsApp QR code" />
+        <ol class="steps">
+          <li>Open WhatsApp on your phone</li>
+          <li>Settings → Linked devices → Link a device</li>
+          <li>Point your phone at this QR code</li>
+        </ol>
+      </div>
+    </section>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="label">Saved</div>
+        <div class="value" id="save-count">0</div>
+      </div>
+      <div class="stat">
+        <div class="label">Last save</div>
+        <div class="value" id="last-kind" style="font-size:16px;padding-top:8px">—</div>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>Save folder</h2>
+      <div class="path" id="save-dir">…</div>
+      <div class="actions" style="margin-top:12px">
+        <button class="primary" id="btn-reveal">Reveal in Finder</button>
+        <button id="btn-choose">Choose folder…</button>
+        <button id="btn-restart">Reconnect</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Recent saves</h2>
+      <p class="empty" id="saves-empty">No view-once media saved yet.</p>
+      <ul id="saves"></ul>
+    </section>
+
+    <section class="card">
+      <h2>Activity</h2>
+      <pre id="logs"></pre>
+    </section>
+
+    <section class="card" id="errors-card" style="display:none">
+      <h2>Errors</h2>
+      <pre id="errors"></pre>
+    </section>
+  </div>
+
+  <script>
+    const api = window.viewOnce
+    let saveCount = 0
+    const maxList = 40
+    const maxLogLines = 80
+
+    const statusLabel = document.getElementById('status-label')
+    const statusDetail = document.getElementById('status-detail')
+    const statusDot = document.getElementById('status-dot')
+    const qrWrap = document.getElementById('qr-wrap')
+    const qrImg = document.getElementById('qr')
+    const saveDirEl = document.getElementById('save-dir')
+    const saveCountEl = document.getElementById('save-count')
+    const lastKindEl = document.getElementById('last-kind')
+    const savesEl = document.getElementById('saves')
+    const savesEmpty = document.getElementById('saves-empty')
+    const logsEl = document.getElementById('logs')
+    const errorsEl = document.getElementById('errors')
+    const errorsCard = document.getElementById('errors-card')
+
+    const statusText = {
+      starting: 'Starting',
+      qr: 'Scan QR code',
+      connecting: 'Connecting',
+      open: 'Connected',
+      closed: 'Disconnected',
+      'logged-out': 'Logged out',
+    }
+
+    function pushLine(el, line) {
+      const lines = (el.textContent || '').split('\n').filter(Boolean)
+      lines.unshift(line)
+      el.textContent = lines.slice(0, maxLogLines).join('\n')
+    }
+
+    api.getState().then((state) => {
+      saveDirEl.textContent = state.saveDir
+    })
+
+    api.onStatus(({ status, detail }) => {
+      statusLabel.textContent = statusText[status] || status
+      statusDetail.textContent = detail || ''
+      statusDot.className = 'dot ' + status
+    })
+
+    api.onQr((dataUrl) => {
+      if (dataUrl) {
+        qrImg.src = dataUrl
+        qrWrap.classList.add('visible')
+      } else {
+        qrWrap.classList.remove('visible')
+        qrImg.removeAttribute('src')
+      }
+    })
+
+    api.onSaved((info) => {
+      saveCount += 1
+      saveCountEl.textContent = String(saveCount)
+      lastKindEl.textContent = info.kind === 'image' ? 'Image' : 'Video'
+      savesEmpty.style.display = 'none'
+
+      const li = document.createElement('li')
+      const left = document.createElement('div')
+      left.innerHTML = `<div>${escapeHtml(info.fileName)}</div><div class="meta">${escapeHtml(info.kind)} · ${escapeHtml(new Date(info.savedAt).toLocaleString())}</div>`
+      const btn = document.createElement('button')
+      btn.textContent = 'Show'
+      btn.onclick = () => api.openFile(info.path)
+      li.appendChild(left)
+      li.appendChild(btn)
+      savesEl.insertBefore(li, savesEl.firstChild)
+      while (savesEl.children.length > maxList) {
+        savesEl.removeChild(savesEl.lastChild)
+      }
+    })
+
+    api.onError((message) => {
+      errorsCard.style.display = 'block'
+      pushLine(errorsEl, message)
+      pushLine(logsEl, 'ERROR: ' + message)
+    })
+
+    api.onLog((message) => {
+      pushLine(logsEl, message)
+    })
+
+    document.getElementById('btn-reveal').onclick = () => api.revealFolder()
+    document.getElementById('btn-choose').onclick = async () => {
+      const dir = await api.chooseFolder()
+      if (dir) saveDirEl.textContent = dir
+    }
+    document.getElementById('btn-restart').onclick = () => api.restartWhatsApp()
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+    }
+  </script>
+</body>
+</html>

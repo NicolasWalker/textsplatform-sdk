@@ -1,0 +1,52 @@
+{
+  "name": "@textshq/platform-whatsapp",
+  "version": "0.0.1",
+  "main": "./dist/index.js",
+  "files": [
+    "dist/**/*"
+  ],
+  "scripts": {
+    "ncc": "npx @vercel/ncc build -e better-sqlite3 -m --target es2019 -o _ncc dist/index.js",
+    "prepack": "yarn tsc",
+    "build": "yarn tsc",
+    "lint": "yarn eslint src --ext ts,tsx,js,jsx --cache",
+    "lint:fix": "yarn lint --fix",
+    "test": "jest"
+  },
+  "nativeDeps": {
+    "better-sqlite3": "npm:@signalapp/better-sqlite3@8.8.1"
+  },
+  "dependencies": {
+    "@textshq/platform-sdk": "https://github.com/TextsHQ/platform-sdk#69d1d78006b09323c4e5f6b6e512c7ce20f9c456",
+    "baileys": "https://github.com/WhiskeySockets/Baileys#master",
+    "better-sqlite3": "^8.6.0",
+    "jimp": "^0.16.2",
+    "link-preview-js": "2.1.15",
+    "match-sorter": "^4.2.1",
+    "mem": "^8.0.0",
+    "mime-db": "^1.52.0",
+    "node-cache": "^5.1.2",
+    "pino": "^7.8.0",
+    "react": "https://github.com/TextsHQ/react-global-shim#main",
+    "sanitize-filename": "^1.6.3",
+    "typeorm": "^0.3.17",
+    "typeorm-naming-strategies": "^2.0.0"
+  },
+  "devDependencies": {
+    "@textshq/eslint-config": "https://github.com/TextsHQ/eslint-config#main",
+    "@types/eslint": "^8.4.10",
+    "@types/jest": "^29.0.0",
+    "@types/match-sorter": "^4.0.0",
+    "@types/pino": "^7.0.5",
+    "@types/react": "17.0.21",
+    "eslint": "^8.30.0",
+    "jest": "^29.0.0",
+    "ts-jest": "^29.0.5",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.0.2"
+  },
+  "packageManager": "yarn@3.5.0",
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
