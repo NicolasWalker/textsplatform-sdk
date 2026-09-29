@@ -118,6 +118,19 @@ describe('File Cache Tests', () => {
     expect(await stat(`${PATH}/${key}`).catch(() => false)).toBe(false)
   })
 
+  it('should put and has bytes under an attachment key', async () => {
+    const key = [`attachment`, `chat@s.whatsapp.net`, `msgid|0`, `file.jpg`].map(p => encodeURIComponent(p))
+    expect(await cache.has(key)).toBe(false)
+
+    const bytes = Buffer.from('view-once-bytes')
+    const dest = await cache.put(key, bytes)
+    expect(await cache.has(key)).toBe(true)
+    expect(await readFile(dest)).toEqual(bytes)
+
+    await cache.clear(key)
+    expect(await cache.has(key)).toBe(false)
+  })
+
   it('should return a range from cache', async () => {
     const key = `testing-${Date.now()}`
 

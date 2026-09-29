@@ -187,6 +187,7 @@ export default class WhatsAppAPI implements PlatformAPI {
       },
       this,
       {
+        getSocket: () => this.client,
         getDroppedEvents: () => getDroppedEvents({ dataDirPath: this.dataDirPath }),
         onDroppedEvents: events => saveDroppedEvents(events, { dataDirPath: this.dataDirPath }),
         acknowledgeRetryDroppedEvents: (events, success) => acknowledgeDroppedEventsRetry(events, success, { dataDirPath: this.dataDirPath }),

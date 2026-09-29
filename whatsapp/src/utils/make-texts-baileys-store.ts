@@ -14,14 +14,26 @@ import mapPresenceUpdate from './map-presence-update'
 import registerDBSubscribers from './register-db-subscribers'
 import { CURRENT_MAPPING_VERSION } from '../config.json'
 import type { DroppedEventHandlerOptions } from './dropped-events'
+import { persistViewOnceMediaForMessages, type ViewOnceMediaSaved } from './view-once'
 
 const DEFAULT_CHUNK_SIZE = 100
+
+export type TextsBaileysStoreOptions = DroppedEventHandlerOptions & {
+  getSocket?: () => WASocket | undefined
+  onViewOnceMediaFolderCopy?: (saved: ViewOnceMediaSaved) => Promise<void>
+}
 
 const makeTextsBaileysStore = (
   publishEvent: (event: ServerEvent) => void,
   getGroupMetadata: WASocket['groupMetadata'],
   mappingCtx: MappingContextWithDBAndFileCache,
-  { onDroppedEvents, getDroppedEvents, acknowledgeRetryDroppedEvents }: DroppedEventHandlerOptions = {},
+  {
+    onDroppedEvents,
+    getDroppedEvents,
+    acknowledgeRetryDroppedEvents,
+    getSocket,
+    onViewOnceMediaFolderCopy,
+  }: TextsBaileysStoreOptions = {},
 ) => {
   registerDBSubscribers(publishEvent, mappingCtx)
 
@@ -30,11 +42,23 @@ const makeTextsBaileysStore = (
 
   const excludeEvent = false
 
+  async function persistViewOnce(messages: DBMessage[], ctx: MappingContextWithDBAndFileCache) {
+    const sock = getSocket?.()
+    if (!sock || !messages.length) return
+    await persistViewOnceMediaForMessages(messages, {
+      fileCache: ctx.fileCache,
+      sock,
+      logger: ctx.logger,
+      onMediaFolderCopy: onViewOnceMediaFolderCopy,
+    })
+  }
+
   async function processEvents(
     events: Partial<BaileysEventMap>,
     ctx: MappingContextWithDBAndFileCache,
   ) {
     let didSyncHistory = false
+    const viewOnceCandidates: DBMessage[] = []
     mappingCtx.logger.trace({ events }, 'recv event')
 
     if (events['creds.update']) {
@@ -60,7 +84,8 @@ const makeTextsBaileysStore = (
 
       await handleChatsSync({ chats }, ctx)
       await handleContactsSync({ contacts, isLatest }, ctx)
-      await handleMessagesSync({ messages }, ctx)
+      const syncedMessages = await handleMessagesSync({ messages }, ctx)
+      viewOnceCandidates.push(...syncedMessages)
 
       if (chats.length) {
         didSyncHistory = true
@@ -73,12 +98,15 @@ const makeTextsBaileysStore = (
     ]
 
     if (events['messages.upsert']) {
-      await handleMessagesUpsert(
+      const upserted = await handleMessagesUpsert(
         events['messages.upsert'],
         updatedChats,
         excludeEvent,
         ctx,
       )
+      if (upserted?.length) {
+        viewOnceCandidates.push(...upserted)
+      }
     }
 
     if (updatedChats.length) {
@@ -160,7 +188,7 @@ const makeTextsBaileysStore = (
       }
     }
 
-    return { didSyncHistory }
+    return { didSyncHistory, viewOnceCandidates }
   }
 
   async function process(events: Partial<BaileysEventMap>) {
@@ -168,11 +196,16 @@ const makeTextsBaileysStore = (
 
     if (droppedEventClusters.length > 0) {
       for (const droppedEventCluster of droppedEventClusters) {
-        const success = await mappingCtx.db.transaction(db => processEvents(droppedEventCluster.events, { ...mappingCtx, db }))
-          .then(() => true)
+        const droppedResult = await mappingCtx.db.transaction(db => processEvents(droppedEventCluster.events, { ...mappingCtx, db }))
+          .then(async result => {
+            if (result?.viewOnceCandidates?.length) {
+              await persistViewOnce(result.viewOnceCandidates, mappingCtx)
+            }
+            return true
+          })
           .catch(() => false)
 
-        const { exceededMaximumAttempts } = await acknowledgeRetryDroppedEvents?.(droppedEventCluster, success) ?? {}
+        const { exceededMaximumAttempts } = await acknowledgeRetryDroppedEvents?.(droppedEventCluster, droppedResult) ?? {}
 
         if (exceededMaximumAttempts) {
           const eventNames = Object.keys(droppedEventCluster.events).join(', ')
@@ -206,8 +239,13 @@ const makeTextsBaileysStore = (
             texts?.Sentry.captureMessage(`Dropped WhatsApp Events: "${err.message}"`)
 
             onDroppedEvents?.(events)
+            return undefined
           },
         )
+
+      if (result?.viewOnceCandidates?.length) {
+        await persistViewOnce(result.viewOnceCandidates, mappingCtx)
+      }
 
       return result
     }
@@ -307,7 +345,7 @@ async function handleMessagesUpsert(
   messages = messages
     .filter(u => u.key.remoteJid && !isJidStatusBroadcast(u.key.remoteJid))
   if (!messages.length) {
-    return
+    return []
   }
 
   let key = (await dbGetLatestMsgOrderKey(db)) || 0
@@ -469,6 +507,8 @@ async function handleMessagesUpsert(
       .orIgnore()
       .execute()
   }
+
+  return mapped
 }
 
 async function handleMessagesDelete(
@@ -627,6 +667,7 @@ async function handleMessagesSync(
   await chunkedWrite(db.getRepository(DBMessage), dbMessages, DEFAULT_CHUNK_SIZE)
 
   logger.info({ messages: dbMessages.length }, 'saved message history')
+  return dbMessages
 }
 
 export const cleanAttachments = async (fileCache: MappingContextWithDBAndFileCache['fileCache'], threadID: string, attachments: DBMessage['attachments']) => {

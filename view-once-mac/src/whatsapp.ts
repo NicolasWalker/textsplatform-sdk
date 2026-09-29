@@ -16,9 +16,11 @@ import {
   describeViewOnceWrapper,
   downloadViewOnceMedia,
   getViewOnceMedia,
+  isViewOnceMessage,
   messageDedupKey,
 } from './view-once'
 import { createAdvSecretKey, decideCompanionRegRefresh, replacePairingQrAdvSecret } from './pairing-qr'
+import { ConversationStore } from './conversation-store'
 
 export type ConnectionStatus =
   | 'starting'
@@ -35,6 +37,7 @@ export interface SavedFileInfo {
   chatId: string
   messageId: string
   savedAt: string
+  cachePath?: string
 }
 
 export interface WhatsAppControllerOptions {
@@ -54,6 +57,7 @@ export class WhatsAppController {
   private authDir: string
   private processed = new Set<string>()
   private processedPath: string
+  private conversations: ConversationStore
   private saving = Promise.resolve()
   private shouldReconnect = true
   private latestQr: string | undefined
@@ -64,6 +68,7 @@ export class WhatsAppController {
     this.saveDir = opts.saveDir
     this.authDir = opts.authDir
     this.processedPath = path.join(opts.authDir, 'processed-ids.json')
+    this.conversations = new ConversationStore(opts.authDir)
     this.logger = pino({ level: 'info' })
   }
 
@@ -80,6 +85,7 @@ export class WhatsAppController {
     this.shouldReconnect = true
     await fs.mkdir(this.authDir, { recursive: true })
     await fs.mkdir(this.saveDir, { recursive: true })
+    await this.conversations.init()
     await this.loadProcessed()
     await this.connect()
   }
@@ -170,7 +176,7 @@ export class WhatsAppController {
       if (connection === 'open') {
         this.latestQr = undefined
         this.opts.onQr(null)
-        this.opts.onStatus('open', 'Connected — saving view-once media from history and new messages')
+        this.opts.onStatus('open', 'Connected — saving conversations and view-once media')
       }
 
       if (connection === 'close') {
@@ -283,32 +289,73 @@ export class WhatsAppController {
   }
 
   private async processMessage(msg: WAMessage, source: 'history' | 'live') {
+    const isViewOnce = isViewOnceMessage(msg)
+    // Keep every message on its conversation thread (Texts-style record).
+    await this.conversations.upsertMessage(msg, isViewOnce)
+
     const media = getViewOnceMedia(msg)
     if (!media) return
 
     const key = messageDedupKey(msg)
-    if (this.processed.has(key)) {
+    const alreadyCached = await this.conversations.hasAttachment(msg)
+    const alreadyInMediaFolder = this.processed.has(key)
+
+    if (alreadyCached && alreadyInMediaFolder) {
       this.opts.onLog(`Skip duplicate (${source}): ${key}`)
       return
     }
 
-    if (!this.sock) {
+    if (!this.sock && !alreadyCached) {
       this.opts.onError('Socket not ready')
       return
     }
 
     const wrapper = describeViewOnceWrapper(msg)
     this.opts.onLog(
-      `Downloading view-once ${media.kind} (${wrapper}) from ${source}: ${key}`,
+      `Saving view-once ${media.kind} (${wrapper}) from ${source}: ${key}`,
     )
 
     try {
-      const buffer = await downloadViewOnceMedia(media, this.sock, this.logger)
-      const info = await this.writeFile(msg, media.kind, media.extension, buffer)
-      this.processed.add(key)
-      await this.persistProcessed()
-      this.opts.onSaved(info)
-      this.opts.onLog(`Saved ${info.fileName}`)
+      let buffer: Buffer
+      if (alreadyCached) {
+        const threadID = msg.key.remoteJid || 'unknown'
+        const mid = `${msg.key.id || 'unknown'}|${msg.key.fromMe ? '1' : '0'}`
+        const cachePath = this.conversations.attachmentCachePath(threadID, mid, media.extension)
+        buffer = await fs.readFile(cachePath)
+      } else {
+        buffer = await downloadViewOnceMedia(media, this.sock!, this.logger)
+      }
+
+      const savedAt = new Date().toISOString()
+      const mediaInfo = alreadyInMediaFolder
+        ? null
+        : await this.writeMediaFolderCopy(msg, media.kind, media.extension, buffer)
+
+      const stored = alreadyCached && !mediaInfo
+        ? null
+        : await this.conversations.attachMedia(msg, {
+          kind: media.kind,
+          mimeType: media.mimeType,
+          extension: media.extension,
+          fileName: mediaInfo?.fileName || `${sanitize(msg.key.id || 'msg')}.${media.extension}`,
+          savedAt,
+          mediaPath: mediaInfo?.path,
+          buffer,
+        })
+
+      if (mediaInfo) {
+        this.processed.add(key)
+        await this.persistProcessed()
+        this.opts.onSaved({
+          ...mediaInfo,
+          cachePath: stored?.attachment?.cachePath,
+        })
+        this.opts.onLog(`Saved on conversation and media folder: ${mediaInfo.fileName}`)
+      } else if (!alreadyCached) {
+        this.opts.onLog(`Cached on conversation message: ${key}`)
+      } else {
+        this.opts.onLog(`Media folder copy written from conversation cache: ${key}`)
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       this.opts.onError(
@@ -317,7 +364,7 @@ export class WhatsAppController {
     }
   }
 
-  private async writeFile(
+  private async writeMediaFolderCopy(
     msg: WAMessage,
     kind: 'image' | 'video',
     extension: string,
